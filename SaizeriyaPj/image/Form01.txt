@@ -1,0 +1,396 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using OpenCvSharp;
+using OpenCvSharp.Extensions;
+
+namespace SaizeriyaPj
+{
+    public partial class Form1 : Form
+    {
+        // 特徴量マッチングインスタンス
+        Matching OneMatching;
+
+        // 元画像
+        Bitmap SrcBmp, TargetBmp;
+        Bitmap ShowingSrcBmp, ShowingTargetBmp;
+
+        // マスクで切り抜いた画像
+        Bitmap CroppedSrcBmp, CroppedTargetBmp;
+
+        // マッチング対応画像
+        Bitmap MatchingResultBmp;
+
+        // 射影変換画像　これとCroppedTargetBmpを比較することになる
+        Bitmap WarpedSrcBmp;
+
+        // 元画像の最大表示サイズ
+        const int MaxWidth = 320;
+        const int MaxHeight = 240;
+
+        // 特徴量の使用率
+        double FeatureRate = 0.1;
+
+
+
+        public Form1()
+        {
+            InitializeComponent();
+
+            // コンポーネントのサイズ指定
+            pictureBox_Src.Width = MaxWidth;
+            pictureBox_Src.Height = MaxHeight;
+            pictureBox_Target.Width = MaxWidth;
+            pictureBox_Target.Height = MaxHeight;
+
+
+        }
+
+
+        /// <summary>
+        /// マッチングボタンイベント
+        /// </summary>
+        private void button_ExeMatching_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                // マスクに基づいて画像のクロップを行う
+                int x, y, width, height;
+
+                // Src
+                x = (int)(ShowingMaskSrcRect.X / ScaleSrc);
+                y = (int)(ShowingMaskSrcRect.Y / ScaleSrc);
+                width = (int)(ShowingMaskSrcRect.Width / ScaleSrc);
+                height = (int)(ShowingMaskSrcRect.Height / ScaleSrc);
+                MaskSrcRect = new Rectangle(x, y, width, height);
+                CroppedSrcBmp = SrcBmp.Clone(MaskSrcRect, SrcBmp.PixelFormat);
+
+                // Target
+                x = (int)(ShowingMaskTargetRect.X / ScaleTarget);
+                y = (int)(ShowingMaskTargetRect.Y / ScaleTarget);
+                width = (int)(ShowingMaskTargetRect.Width / ScaleTarget);
+                height = (int)(ShowingMaskTargetRect.Height / ScaleTarget);
+                MaskTargetRect = new Rectangle(x, y, width, height);
+                CroppedTargetBmp = TargetBmp.Clone(MaskTargetRect, TargetBmp.PixelFormat);
+
+                // マッチング実行
+                OneMatching = new Matching(CroppedSrcBmp.ToMat(), CroppedTargetBmp.ToMat(), FeatureRate);
+                OneMatching.RunMutching();
+
+                // 結果表示
+                MatchingResultBmp = OneMatching.MatchingResultMat.ToBitmap();
+                pictureBox_MatchingResult.Image = MatchingResultBmp;
+            }
+            catch (Exception)
+            {
+                MessageBox.Show("マッチング失敗");
+            }
+        }
+
+        /// <summary>
+        /// 変換ボタンイベント
+        /// </summary>
+        private void button_ExeWarp_Click(object sender, EventArgs e)
+        {
+            OneMatching.FitSrcToTarget();
+
+            WarpedSrcBmp = OneMatching.WarpedSrcMat.ToBitmap();
+            pictureBox_Warped.Image = WarpedSrcBmp;
+            SaveSrcAndTarget();
+        }
+
+        /// <summary>
+        /// 射影変換画像保存
+        /// </summary>
+        void SaveSrcAndTarget()
+        {
+            string date = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var dir = @"C:\Users\Kyouta.K\source\repos\SaizeriyaPj\SaizeriyaPj\image\" + date + @"\";
+            var srcPath = dir + "_src.bmp";
+            var targetPath = dir + "_target.bmp";
+
+            System.IO.Directory.CreateDirectory(dir);
+
+            WarpedSrcBmp.Save(srcPath, System.Drawing.Imaging.ImageFormat.Bmp);
+            CroppedTargetBmp.Save(targetPath, System.Drawing.Imaging.ImageFormat.Bmp);
+        }
+
+        /// <summary>
+        /// ソース画像選択
+        /// </summary>
+        private void button_InputSrc_Click(object sender, EventArgs e)
+        {
+            var ofd = new OpenFileDialog();
+            ofd.Title = "ソース画像選択";
+            ofd.RestoreDirectory = true;
+            if (ofd.ShowDialog() == DialogResult.OK)
+            {
+                var srcPath = ofd.FileName;
+                SrcBmp = new Bitmap(srcPath);
+                SetShowingSrcBmp();
+                InitSrcMask();
+            }
+        }
+
+        /// <summary>
+        /// ターゲット画像選択
+        /// </summary>
+        private void button_InputTarget_Click(object sender, EventArgs e)
+        {
+            var ofd = new OpenFileDialog();
+            ofd.Title = "ターゲット画像選択";
+            ofd.RestoreDirectory = true;
+            if (ofd.ShowDialog() == DialogResult.OK)
+            {
+                var targetPath = ofd.FileName;
+                TargetBmp = new Bitmap(targetPath);
+                SetShowingTargetBmp();
+                InitTargetMask();
+            }
+        }
+
+        /// <summary>
+        /// 表示用のShowingSrcBmpを初期化する
+        /// </summary>
+        void SetShowingSrcBmp()
+        {
+            // Src
+            if (SrcBmp.Width <= MaxWidth && SrcBmp.Height <= MaxHeight)
+            {
+                ShowingSrcBmp = new Bitmap(SrcBmp);
+            }
+            else
+            {
+                // 倍率(scale)を求める
+                double bmpRate = (double)SrcBmp.Width / (double)SrcBmp.Height;
+                double boxRate = (double)MaxWidth / (double)MaxHeight;
+
+                // 縦横どちらが長いかによってscaleを決める
+                if (bmpRate >= boxRate)
+                    ScaleSrc = (double)MaxWidth / (double)SrcBmp.Width;
+                else
+                    ScaleSrc = (double)MaxHeight / (double)SrcBmp.Height;
+
+                int scaledWidth = (int)(SrcBmp.Width * ScaleSrc);
+                int scaledHeight = (int)(SrcBmp.Height * ScaleSrc);
+
+                ShowingSrcBmp = new Bitmap(SrcBmp, scaledWidth, scaledHeight);
+            }
+            pictureBox_Src.Image = ShowingSrcBmp;
+        }
+
+        /// <summary>
+        /// 表示用のShowingTargetBmpを初期化する
+        /// </summary>
+        void SetShowingTargetBmp()
+        {
+            // Target
+            if (TargetBmp.Width <= MaxWidth && TargetBmp.Height <= MaxHeight)
+            {
+                ShowingTargetBmp = new Bitmap(TargetBmp);
+            }
+            else
+            {
+                // 倍率(scale)を求める
+                double bmpRate = (double)TargetBmp.Width / (double)TargetBmp.Height;
+                double boxRate = (double)MaxWidth / (double)MaxHeight;
+
+                // 縦横どちらが長いかによってscaleを決める
+                if (bmpRate >= boxRate)
+                    ScaleTarget = (double)MaxWidth / (double)TargetBmp.Width;
+                else
+                    ScaleTarget = (double)MaxHeight / (double)TargetBmp.Height;
+
+                int scaledWidth = (int)(TargetBmp.Width * ScaleTarget);
+                int scaledHeight = (int)(TargetBmp.Height * ScaleTarget);
+
+                ShowingTargetBmp = new Bitmap(TargetBmp, scaledWidth, scaledHeight);
+            }
+            pictureBox_Target.Image = ShowingTargetBmp;
+        }
+
+
+        // マスク関連
+
+        // マスク表示部
+        PictureBox pictureBox_MaskSrc, pictureBox_MaskTarget;
+
+        // ドラッグで囲んだ領域
+        Rectangle ShowingMaskSrcRect, ShowingMaskTargetRect;
+
+        // ShowingMaskXxxRectを実際の元画像に合わせて拡大したりした最終的な領域
+        Rectangle MaskSrcRect, MaskTargetRect;
+
+        // 画面への表示倍率
+        double ScaleSrc, ScaleTarget;
+
+        // 表示用マスク画像
+        Bitmap ShowingMaskSrcBmp, ShowingMaskTargetBmp;
+
+        // マスクの色
+        Color MaskEdgeColor = Color.FromArgb(255, 255, 0, 255); // 境界の色
+        Color MaskFillColor = Color.FromArgb(192, 32, 0, 32);  // 非選択部の色
+        Color UnmaskColor = Color.FromArgb(255, 0, 0, 0);       // 選択部の色　この色を透明色とする
+
+        /// <summary>
+        /// Srcマスク初期化
+        /// </summary>
+        void InitSrcMask()
+        {
+            // マスク表示部設定
+            pictureBox_MaskSrc = new PictureBox();
+            pictureBox_MaskSrc.Parent = pictureBox_Src;
+            pictureBox_MaskSrc.BackColor = Color.Transparent;
+            pictureBox_MaskSrc.Size = ShowingSrcBmp.Size;
+            pictureBox_MaskSrc.Location = new System.Drawing.Point(0, 0);
+
+            // マスク画像設定
+            ShowingMaskSrcBmp = new Bitmap(ShowingSrcBmp.Width, ShowingSrcBmp.Height);
+            ShowingMaskSrcRect = new Rectangle(0, 0, ShowingMaskSrcBmp.Width, ShowingMaskSrcBmp.Height);
+            MaskSrcRect = new Rectangle(0, 0, SrcBmp.Width, SrcBmp.Height);
+            Graphics gSrc = Graphics.FromImage(ShowingMaskSrcBmp);
+            gSrc.FillRectangle(new SolidBrush(UnmaskColor), ShowingMaskSrcRect);
+            gSrc.Dispose();
+            ShowingMaskSrcBmp.MakeTransparent(UnmaskColor);
+            pictureBox_MaskSrc.Image = ShowingMaskSrcBmp;
+
+            // イベント追加
+            pictureBox_MaskSrc.MouseDown += pictureBox_MaskSrc_MouseDown;
+            pictureBox_MaskSrc.MouseMove += pictureBox_MaskSrc_MouseMove;
+            pictureBox_MaskSrc.MouseUp += pictureBox_MaskSrc_MouseUp;
+
+            // マスクを強制的に最前面へ
+            pictureBox_MaskSrc.BringToFront();
+        }
+
+        /// <summary>
+        /// Targetマスク初期化
+        /// </summary>
+        void InitTargetMask()
+        {
+            // マスク表示部設定
+            pictureBox_MaskTarget = new PictureBox();
+            pictureBox_MaskTarget.Parent = pictureBox_Target;
+            pictureBox_MaskTarget.BackColor = Color.Transparent;
+            pictureBox_MaskTarget.Location = new System.Drawing.Point(0, 0);
+            pictureBox_MaskTarget.Size = ShowingTargetBmp.Size;
+
+            // マスク画像設定
+            ShowingMaskTargetBmp = new Bitmap(ShowingTargetBmp.Width, ShowingTargetBmp.Height);
+            ShowingMaskTargetRect = new Rectangle(0, 0, ShowingMaskTargetBmp.Width, ShowingMaskTargetBmp.Height);
+            MaskTargetRect = new Rectangle(0, 0, TargetBmp.Width, TargetBmp.Height);
+            Graphics gTarget = Graphics.FromImage(ShowingMaskTargetBmp);
+            gTarget.FillRectangle(new SolidBrush(UnmaskColor), ShowingMaskTargetRect);
+            gTarget.Dispose();
+            ShowingMaskTargetBmp.MakeTransparent(UnmaskColor);
+            pictureBox_MaskTarget.Image = ShowingMaskTargetBmp;
+
+            // イベント追加
+            pictureBox_MaskTarget.MouseDown += pictureBox_MaskTarget_MouseDown;
+            pictureBox_MaskTarget.MouseMove += pictureBox_MaskTarget_MouseMove;
+            pictureBox_MaskTarget.MouseUp += pictureBox_MaskTarget_MouseUp;
+
+            // マスクを強制的に最前面へ
+            pictureBox_MaskTarget.BringToFront();
+        }
+
+        // Srcマスクイベント
+        System.Drawing.Point BeginPointSrc;
+        bool IsMouseDownSrc = false;
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            var subimage = new Form2(WarpedSrcBmp, CroppedTargetBmp);
+            subimage.Show();
+        }
+        private void button_InitMaskSrc_Click(object sender, EventArgs e)
+        {
+            InitSrcMask();
+        }
+        private void pictureBox_MaskSrc_MouseDown(object sender, MouseEventArgs e)
+        {
+            // ドラッグ開始位置を保持
+            BeginPointSrc = e.Location;
+            IsMouseDownSrc = true;
+        }
+        private void pictureBox_MaskSrc_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (IsMouseDownSrc)
+            {
+                // 現在の位置を取得してマスク用Rectangleを作成
+                System.Drawing.Point EndPoint = e.Location;
+                int x, y, width, height;
+                x = Math.Min(BeginPointSrc.X, EndPoint.X);
+                y = Math.Min(BeginPointSrc.Y, EndPoint.Y);
+                width = Math.Abs(BeginPointSrc.X - EndPoint.X);
+                height = Math.Abs(BeginPointSrc.Y - EndPoint.Y);
+                ShowingMaskSrcRect = new Rectangle(x, y, width, height);
+
+                // 描画
+                //ShowingMaskSrcBmp = new Bitmap(ShowingMaskSrcBmp.Width, ShowingMaskSrcBmp.Height);
+                Graphics g = Graphics.FromImage(ShowingMaskSrcBmp);
+                var rect = new Rectangle(0, 0, ShowingMaskSrcBmp.Width, ShowingMaskSrcBmp.Height);
+                //g.FillRectangle(new SolidBrush(MaskFillColor), rect);       // 外側
+                g.FillRectangle(new SolidBrush(UnmaskColor), ShowingMaskSrcRect);  // 内側
+                g.DrawRectangle(new Pen(MaskEdgeColor, 2.0f), ShowingMaskSrcRect); // 枠
+                g.Dispose();
+                ShowingMaskSrcBmp.MakeTransparent(UnmaskColor);
+                pictureBox_MaskSrc.Image = ShowingMaskSrcBmp;
+            }
+        }
+        private void pictureBox_MaskSrc_MouseUp(object sender, MouseEventArgs e)
+        {
+            IsMouseDownSrc = false;
+        }
+
+        // Targetマスクイベント
+        System.Drawing.Point BeginPointTarget;
+        bool IsMouseDownTarget = false;
+        private void pictureBox_MaskTarget_MouseDown(object sender, MouseEventArgs e)
+        {
+            // ドラッグ開始位置を保持
+            BeginPointTarget = e.Location;
+            IsMouseDownTarget = true;
+        }
+        private void button_InitMaskTarget_Click(object sender, EventArgs e)
+        {
+            InitTargetMask();
+        }
+        private void pictureBox_MaskTarget_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (IsMouseDownTarget)
+            {
+                // 現在の位置を取得してマスク用Rectangleを作成
+                System.Drawing.Point EndPoint = e.Location;
+                int x, y, width, height;
+                x = Math.Min(BeginPointTarget.X, EndPoint.X);
+                y = Math.Min(BeginPointTarget.Y, EndPoint.Y);
+                width = Math.Abs(BeginPointTarget.X - EndPoint.X);
+                height = Math.Abs(BeginPointTarget.Y - EndPoint.Y);
+                ShowingMaskTargetRect = new Rectangle(x, y, width, height);
+
+                // 描画
+                //ShowingMaskTargetBmp = new Bitmap(ShowingMaskTargetBmp.Width, ShowingMaskTargetBmp.Height);
+                Graphics g = Graphics.FromImage(ShowingMaskTargetBmp);
+                var rect = new Rectangle(0, 0, ShowingMaskTargetBmp.Width, ShowingMaskTargetBmp.Height);
+                //g.FillRectangle(new SolidBrush(MaskFillColor), rect);       // 外側
+                g.FillRectangle(new SolidBrush(UnmaskColor), ShowingMaskTargetRect);  // 内側
+                g.DrawRectangle(new Pen(MaskEdgeColor, 2.0f), ShowingMaskTargetRect); // 枠
+                g.Dispose();
+                ShowingMaskTargetBmp.MakeTransparent(UnmaskColor);
+                pictureBox_MaskTarget.Image = ShowingMaskTargetBmp;
+            }
+        }
+        private void pictureBox_MaskTarget_MouseUp(object sender, MouseEventArgs e)
+        {
+            IsMouseDownTarget = false;
+        }
+
+    }
+}
